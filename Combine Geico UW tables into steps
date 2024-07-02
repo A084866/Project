@@ -1,0 +1,25 @@
+import glob 
+import pandas as pd 
+files=glob.glob('//10.192.54.52/PL/private/Farrah/2024/Geico/Score Group3/*.csv')
+dfs=[]
+for file in files:
+    df=pd.read_csv(file)
+    dfs.append(df)
+len(dfs)
+rouped_tables=[]
+current_column_name=None
+for df in dfs:
+    first_column_name=df.columns[0]
+    if grouped_tables and current_column_name==first_column_name:
+        grouped_tables.append(df)
+    else:
+        if grouped_tables:
+            grouped_df=pd.concat(grouped_tables,ignore_index=True)
+            grouped_df.to_csv(f'//10.192.54.52/pl/private/Farrah/2024/Geico/Score Group3/table_{current_column_name}.csv',index=False)
+            print(f"Concatenated Table for Column'{current_column_name} Exported")
+        grouped_tables=[df]
+        current_column_name=first_column_name
+    if grouped_tables:
+        grouped_df=pd.concat(grouped_tables,ignore_index=True)
+        grouped_df.to_csv(f'//10.192.54.52/pl/private/Farrah/2024/Geico/Score Group3/table_{current_column_name}.csv',index=False)
+        print(f"Concatenated Table for Column'{current_column_name} Exported")
