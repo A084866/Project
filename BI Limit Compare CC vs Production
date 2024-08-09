@@ -1,0 +1,126 @@
+create or replace table EXDBILIM as
+select
+a.exd_order_id,
+b.POS_LOG_KEY,
+b.pos_log_key_seq_number,
+b.policy_number,
+b.policy_renewal_counter,
+c.policy_bi_limits_code,
+c.carrier_name,
+c.bi_cov_ind,
+c.policy_inception_date,
+c.pop_order_id,
+c.policy_seq_nbr,
+d.policy_driver_cov_end_date
+from
+external_data_pop.published_ods.POP_ORDER as a
+inner join 
+external_data_common.published_ods.exd_policy as b
+on a.EXD_ORDER_ID=b.EXD_ORDER_ID
+inner join external_data_pop.published_ods.pop_carrier_prior_policy as c
+on a.POP_ORDER_ID=c.POP_ORDER_ID
+inner join 
+external_data_pop.published_ods.POP_CARRIER_PRIOR_POLICY_DRIVER as d
+on c.pop_order_id=d.pop_order_id
+and c.policy_seq_nbr=d.policy_seq_nbr
+order by b.pos_log_key
+
+
+create or replace table recentbilim as
+select distinct 
+policy_number,
+policy_bi_limits_code
+from exdbilim
+where policy_seq_nbr=1
+
+
+select* from
+recentbilim
+limit 10000
+
+
+
+CREATE TABLE  ab_loss_data AS         
+        SELECT 
+          POL.ST_CD,
+          POL.POL_ID_CHAR,
+          POL.RENW_SFX_NBR      AS SUFFIX,
+          POL.POL_EXPR_YR 		AS POLEXPYR,
+		  pol.renw_cnt			as renw_cnt,
+		  POL.POL_EFF_DT,
+		  POL.COH_INCP_DT,
+		  POL.CURR_CHNL,
+		  pol.CNSM_MKT_TIER,
+		  pol.PROD_ALGN_VRSN,
+		  pol.INCP_PROD_ALGN_VER,
+		  pol.PRIR_BI_LIM_CD,
+		 
+		  SUM (POL_PLR.WRT_PREM_AMT)
+		   AS WRT_PREM_AMT,
+          SUM (POL_PLR.INCR_CLM_CNT) 
+           AS INCL_CLM_CNT, 
+          SUM (POL_PLR.PAID_CLM_CNT) 
+           AS PAID_CLM_CNT, 
+          SUM (POL_PLR.ERN_EXPS_CNT) 
+           AS ERN_EXPR_CNT, 
+          SUM (POL_PLR.ERN_PREM_AMT) 
+           AS ERN_PREM_AMT,  
+          SUM ((POL_PLR.ERN_PREM_AMT  + 
+                POL_PLR.ERN_PREM_AMT_FEE + 
+                POL_PLR.ERN_PREM_AMT_ACQ )) 
+           AS TOTAL_ERN_PREM, 
+          SUM ((POL_PLR.LOSS_PAID_AMT + 
+                POL_PLR.LOSS_RESV_AMT - 
+                POL_PLR.LOSS_SLSB_AMT )) 
+           AS INCR_LOSS 
+	    
+        FROM
+          MDW_COPY.target.POLICY          POL, 
+		    PLR_COPY.target.MTH_POL_PL_AU AS POL_PLR
+
+        WHERE
+         POL.RPT_BSNS_CD IN ('A', 'S') AND
+          POL.ST_CD = POL_PLR.ST_CD AND
+          POL.POL_ID_CHAR = POL_PLR.POL_ID_CHAR AND
+          POL.RENW_SFX_NBR = POL_PLR.RENW_SFX_NBR AND
+          POL.POL_EXPR_YR = POL_PLR.POL_EXPR_YR  AND
+	 POL.INCP_PROD_ALGN_VER>=8.4
+
+		GROUP BY POL.ST_CD, 
+				POL.POL_ID_CHAR, 
+				POL.RENW_SFX_NBR, 
+				POL.POL_EXPR_YR, 
+				POL.POL_EFF_DT,
+				POL.COH_INCP_DT,
+				pol.renw_cnt,
+				POL.curr_chnl,
+				pol.CNSM_MKT_TIER,
+				pol.PROD_ALGN_VRSN,
+				pol.INCP_PROD_ALGN_VER,
+				 pol.PRIR_BI_LIM_CD
+
+                 
+create table mergebilim as
+select a.*,
+b.*
+from ab_loss_data as a
+inner join 
+recentbilim as b
+on a.pol_id_char=b.policy_number
+
+
+
+
+
+  
+
+select
+policy_bi_limits_code,
+prir_bi_lim_cd,
+sum(ERN_EXPR_CNT) as ecysum,
+sum(ERN_PREM_AMT) as epsum,
+sum(INCR_LOSS) as ILSUM
+from mergebilim
+group by 
+policy_bi_limits_code,
+prir_bi_lim_cd
