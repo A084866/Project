@@ -87,7 +87,22 @@ where policy_seq_nbr=1),
 merged_table as
 (select
 a.*,
-b.*
+b.*,
+cast(case
+        when policy_bi_limits_code in ('A', 'B', 'C', '0') then '1'
+        when policy_bi_limits_code is null or policy_bi_limits_code = '' then 'U'
+        else policy_bi_limits_code
+    end as varchar(6)) as prlim_CC,
+    cast(case
+        when prlim_CC in ('7', '8', 'A', 'B', 'C') then 'PCT_XX'
+        when lapse2_COH = '0-' and prlim_CC  in ('4', '5') then 'A1'
+        when lapse2_COH = '0-' and prlim_CC  in ('2', '3') then 'B1'
+        when lapse2_COH = '1-31' and prlim_CC  in ('2', '3', '4', '5') then 'B1'
+        when lapse2_COH = '0-' and prlim_CC  = '1' then 'C1'
+        when lapse2_COH = '1-31' and prlim_CC  = '1' then 'D1'
+        when lapse2_COH = 'NOP' then 'E1'
+        when lapse2_COH = 'UNK' or prlim_CC  in ('U', 'N') then null
+    end as varchar(6)) as pct_new
 from  recentbilim as a
 inner join cappscore as b
 on a.policy_number =b.pol_id_char
@@ -99,7 +114,8 @@ PRLIM3_COH,
 PCT_COH ,
 lapse2_coh,
 pop_coh,
-risk_5yr,
+prlim_cc,
+pct_new,
 sum(SUM_ECYPD) as ecysum,
 sum(SUM_EPALL) as epsum,
 sum(SUM_ILTOT) as ILSUM,
@@ -112,8 +128,7 @@ PRLIM3_COH,
 PCT_COH ,
 lapse2_coh,
 pop_coh,
-risk_5yr)
+prlim_cc,
+pct_new)
 select *
 from finalsum
-
-
