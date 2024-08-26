@@ -1,0 +1,113 @@
+with Aqqts as
+(
+SELECT distinct
+A.ST_CD,
+A.POL_ID_CHAR,
+A.QT_NBR AS SOLD_QT_NBR,
+A.QT_KEY AS SOLD_QTKEY,
+A.qt_pol_eff_dt,
+B.PRSPCT_KEY,
+B.TRAN_DT,
+B.QT_NBR,
+B.QT_KEY,
+B.AQW_SEQ_NBR,
+row_number() over (partition by a.st_cd,a.pol_id_char,b.qt_key
+order by b.AQW_SEQ_NBR desc) as rn,
+B.PROD_cD,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=183 and A.QT_KEY !=b.qt_key then 1 
+else 0
+end as QTCOUNT_6m,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=365 and A.QT_KEY !=b.qt_key then 1 
+else 0
+end as QTCOUNT_1y,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=1095 and A.QT_KEY!=b.qt_key then 1 
+else 0
+end as QTCOUNT_3y
+FROM
+  AQW_COPY.target.QT_PUB_VIEW AS A
+  INNER JOIN
+  AQW_COPY.target.QT_PUB_VIEW AS B
+ON A.PRSPCT_KEY=B.PRSPCT_KEY
+ where A.POL_ID_CHAR <>''
+ AND A.PROD_CD='AA'
+order by a.st_cd,
+a.pol_id_char,
+b.prspct_key,
+B.QT_KEY,
+B.AQW_SEQ_NBR
+ ),
+nodupaqqts as
+( select *
+ from aqqts
+ where rn=1),
+sum_aq_qtcount as
+(select
+ st_cd,
+ pol_id_char,
+ year(qt_pol_eff_dt) as qtyear,
+ sum(QTCOUNT_6m) as sumqtcount_6m,
+ sum(QTCOUNT_1y) as sumqtcount_1y,
+ sum(QTCOUNT_3y) as sumqtcount_3y
+ from nodupaqqts
+ group by 
+st_cd,
+pol_id_char,
+qtyear
+),
+aqw_qtcnt_capp as(
+select 
+ a.st_cd,
+ a.pol_id_char,
+ a.qtyear,
+ least(a.sumqtcount_6m,10) as capped_6m,
+ least(a.sumqtcount_1y,10) as capped_1y,
+ least(a.sumqtcount_3y,10) as capped_3y,
+sum(B.ECYPD) AS SUM_ECYPD,
+sum(B.ILTOT_ALL) AS SUM_ILTOT,
+sum(B.ILCAP_ALL) AS SUM_ILCAP,
+sum(B.EXP_LOSS_ALL) AS SUM_EXP_LOSS,
+sum(B.EXP_LOSS_POSTCAPP_5YR) AS SUM_EXPLOSS_POST,
+sum(B.EP_ALL) AS SUM_EPALL,
+from  sum_aq_qtcount as a right outer join
+plrnd.staging_scored.scored_ag_89_capp23_v7 as b
+on a.st_cd =b.st_cd
+and a.pol_id_char=b.pol_id_char
+group by 
+a.st_cd,
+a.pol_id_char,
+a.qtyear,
+capped_6m,
+capped_1y,
+capped_3y
+),
+finalsum as 
+(
+select
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear,
+sum(SUM_ECYPD) as ecy,
+sum(SUM_EPALL) as ep,
+sum(SUM_ILTOT) as il,
+sum(SUM_ILCAP) as ilcap,
+sum(SUM_EXP_LOSS) as exploss,
+sum(SUM_EXPLOSS_POST) as exploss_post
+from aqw_qtcnt_capp
+group by
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear
+)
+select *
+from finalsum
+
+
+
+
+
+
+
+
+
