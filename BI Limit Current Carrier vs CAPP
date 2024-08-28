@@ -1,134 +1,104 @@
-with EXDBILIM as
+with Aqqts as
 (
-select
-a.exd_order_id,
-b.POS_LOG_KEY,
-b.pos_log_key_seq_number,
-b.policy_number,
-b.policy_renewal_counter,
-c.policy_bi_limits_code,
-c.carrier_name,
-c.bi_cov_ind,
-c.policy_inception_date,
-c.pop_order_id,
-c.policy_seq_nbr,
-d.policy_driver_cov_end_date
-from
-external_data_pop.published_ods.POP_ORDER as a
-inner join 
-external_data_common.published_ods.exd_policy as b
-on a.EXD_ORDER_ID=b.EXD_ORDER_ID
-inner join external_data_pop.published_ods.pop_carrier_prior_policy as c
-on a.POP_ORDER_ID=c.POP_ORDER_ID
-inner join 
-external_data_pop.published_ods.POP_CARRIER_PRIOR_POLICY_DRIVER as d
-on c.pop_order_id=d.pop_order_id
-and c.policy_seq_nbr=d.policy_seq_nbr
-order by b.pos_log_key
-),
-CAPPscore as
-(select 
+SELECT distinct
 A.ST_CD,
 A.POL_ID_CHAR,
-A.SUFFIX,
-A.POLEXPYR,
-A.COH_INCP_DT, 
-A.channel,
-A.PTSPD_D,
-A.PRLIM3_COH,
-A.PCT_COH ,
-A.PCARR_COH ,
-A.MULTI_DR_COH ,
-A.LAPSE2_COH ,
-A.MC_COH ,
-A.POP_COH ,
-A.A51CREDIT_MXMTCH_NRW_COH,
-A.RISK_5YR,
-A.DRVRCNT,
+A.QT_NBR AS SOLD_QT_NBR,
+A.QT_KEY AS SOLD_QTKEY,
+A.qt_pol_eff_dt,
+B.PRSPCT_KEY,
+B.TRAN_DT,
+B.QT_NBR,
+B.QT_KEY,
+B.AQW_SEQ_NBR,
+row_number() over (partition by a.st_cd,a.pol_id_char,b.qt_key
+order by b.AQW_SEQ_NBR desc) as rn,
+B.PROD_cD,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=183 and A.QT_KEY !=b.qt_key then 1 
+else 0
+end as QTCOUNT_6m,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=365 and A.QT_KEY !=b.qt_key then 1 
+else 0
+end as QTCOUNT_1y,
+case when a.qt_pol_eff_dt-b.tran_dt>0 and a.qt_pol_eff_dt-b.tran_dt<=1095 and A.QT_KEY!=b.qt_key then 1 
+else 0
+end as QTCOUNT_3y
+FROM
+  AQW_COPY.target.QT_PUB_VIEW AS A
+  INNER JOIN
+  AQW_COPY.target.QT_PUB_VIEW AS B
+ON A.PRSPCT_KEY=B.PRSPCT_KEY
+ where A.POL_ID_CHAR <>''
+ AND A.PROD_CD='AA'
+order by a.st_cd,
+a.pol_id_char,
+b.prspct_key,
+B.QT_KEY,
+B.AQW_SEQ_NBR
+ ),
+nodupaqqts as
+( select *
+ from aqqts
+ where rn=1),
+sum_aq_qtcount as
+(select
+ st_cd,
+ pol_id_char,
+ year(qt_pol_eff_dt) as qtyear,
+ sum(QTCOUNT_6m) as sumqtcount_6m,
+ sum(QTCOUNT_1y) as sumqtcount_1y,
+ sum(QTCOUNT_3y) as sumqtcount_3y
+ from nodupaqqts
+ group by 
+st_cd,
+pol_id_char,
+qtyear
+),
+aqw_qtcnt_capp as(
+select 
+ a.st_cd,
+ a.pol_id_char,
+ a.qtyear,
+ least(a.sumqtcount_6m,10) as capped_6m,
+ least(a.sumqtcount_1y,10) as capped_1y,
+ least(a.sumqtcount_3y,10) as capped_3y,
 sum(B.ECYPD) AS SUM_ECYPD,
 sum(B.ILTOT_ALL) AS SUM_ILTOT,
 sum(B.ILCAP_ALL) AS SUM_ILCAP,
 sum(B.EXP_LOSS_ALL) AS SUM_EXP_LOSS,
-sum(B.EP_ALL) AS SUM_EPALL
-from PLRND.RAW.CAPP21_RAW_DATA_V19_NODUP as A
-right join plrnd.staging_scored.scored_di_89_capp21_v7 as B
-on A.ST_CD=B.ST_CD
-AND A.POL_ID_CHAR =B.POL_ID_CHAR
-AND A.SUFFIX=B.SUFFIX
-AND A.POLEXPYR=B.POLEXPYR
-AND A.VEHPOS=B.VEHPOS
-AND A.VEHVRSN=B.VEHVRSN
-WHERE A.COH_INCP_DT>='2018-01-01'
-AND A.COH_INCP_DT<='2023-01-01'
-GROUP BY 
-A.ST_CD	,
-A.POL_ID_CHAR	,
-A.SUFFIX,
-A.POLEXPYR,
-A.COH_INCP_DT, 
-A.channel,
-A.PTSPD_D,
-A.PRLIM3_COH,
-A.PCT_COH ,
-A.PCARR_COH ,
-A.MULTI_DR_COH ,
-A.LAPSE2_COH ,
-A.MC_COH ,
-A.POP_COH ,
-A.A51CREDIT_MXMTCH_NRW_COH,
-A.RISK_5YR,
-A.DRVRCNT),
-recentbilim as
-(select distinct 
-policy_number,
-policy_bi_limits_code
-from exdbilim
-where policy_seq_nbr=1),
-merged_table as
-(select
-a.*,
-b.*,
-cast(case
-        when policy_bi_limits_code in ('A', 'B', 'C', '0') then '1'
-        when policy_bi_limits_code is null or policy_bi_limits_code = '' then 'U'
-        else policy_bi_limits_code
-    end as varchar(6)) as prlim_CC,
-    cast(case
-        when prlim_CC in ('7', '8', 'A', 'B', 'C') then 'PCT_XX'
-        when lapse2_COH = '0-' and prlim_CC  in ('4', '5') then 'A1'
-        when lapse2_COH = '0-' and prlim_CC  in ('2', '3') then 'B1'
-        when lapse2_COH = '1-31' and prlim_CC  in ('2', '3', '4', '5') then 'B1'
-        when lapse2_COH = '0-' and prlim_CC  = '1' then 'C1'
-        when lapse2_COH = '1-31' and prlim_CC  = '1' then 'D1'
-        when lapse2_COH = 'NOP' then 'E1'
-        when lapse2_COH = 'UNK' or prlim_CC  in ('U', 'N') then null
-    end as varchar(6)) as pct_new
-from  recentbilim as a
-inner join cappscore as b
-on a.policy_number =b.pol_id_char
-),
-finalsum as
-(select
-policy_bi_limits_code,
-PRLIM3_COH,
-PCT_COH ,
-lapse2_coh,
-pop_coh,
-prlim_cc,
-pct_new,
-sum(SUM_ECYPD) as ecysum,
-sum(SUM_EPALL) as epsum,
-sum(SUM_ILTOT) as ILSUM,
-sum(SUM_ILcap) as ILcapSUM,
-sum(SUM_EXP_LOSS) as sumexploss
-from merged_table
+sum(B.EXP_LOSS_POSTCAPP_5YR) AS SUM_EXPLOSS_POST,
+sum(B.EP_ALL) AS SUM_EPALL,
+from  sum_aq_qtcount as a right outer join
+plrnd.staging_scored.scored_ag_89_capp23_v7 as b
+on a.st_cd =b.st_cd
+and a.pol_id_char=b.pol_id_char
 group by 
-policy_bi_limits_code,
-PRLIM3_COH,
-PCT_COH ,
-lapse2_coh,
-pop_coh,
-prlim_cc,
-pct_new)
+a.st_cd,
+a.pol_id_char,
+a.qtyear,
+capped_6m,
+capped_1y,
+capped_3y
+),
+finalsum as 
+(
+select
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear,
+sum(SUM_ECYPD) as ecy,
+sum(SUM_EPALL) as ep,
+sum(SUM_ILTOT) as il,
+sum(SUM_ILCAP) as ilcap,
+sum(SUM_EXP_LOSS) as exploss,
+sum(SUM_EXPLOSS_POST) as exploss_post
+from aqw_qtcnt_capp
+group by
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear
+)
 select *
 from finalsum
