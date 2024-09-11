@@ -1,0 +1,101 @@
+with dcaqts as
+(
+SELECT distinct
+QT.QT_ST_CD,
+QT.POL_ID_NBR ,
+qt.QUOTED_POL_EFF_DT,
+qt.qt_nbr,
+QT.FS_LOG_KEY as SOLDQT,
+qt.prspct_nbr,
+B.FS_LOG_KEY AS QUOTEKEY,
+B.QT_CMPLT_DT_ET,
+B.PROD_CD,
+D.st_cd,
+row_number() over (partition by D.st_cd,QT.POL_ID_NBR,b.FS_LOG_KEY
+order by  D.st_cd,QT.POL_ID_NBR,b.FS_LOG_KEY desc) as rn,
+case when QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET>0 and QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET<=183 and QT.FS_LOG_KEY !=b.FS_LOG_KEY then 1 
+else 0
+end as QTCOUNT_6m,
+case when QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET>0 and QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET<=365 and QT.FS_LOG_KEY !=b.FS_LOG_KEY then 1 
+else 0
+end as QTCOUNT_1y,
+case when QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET>0 and QT.QUOTED_POL_EFF_DT-b.QT_CMPLT_DT_ET<=1095 and QT.FS_LOG_KEY !=b.FS_LOG_KEY then 1 
+else 0
+end as QTCOUNT_3y
+From DCA_COPY.TARGET.QUOTE_SET AS QT
+INNER JOIN DCA_COPY.TARGET.QUOTE_SET AS B
+ON QT.prspct_nbr=B.prspct_nbr
+AND QT.CLOS_IND=1
+ AND QT.PROD_CD in ('AU')
+ AND B.PROD_CD IN ('AU')
+ AND B.FS_LOG_KEY <>''
+inner join PLRND.RAW.LKUP_STCD d
+on QT.QT_ST_CD=D.ST_CD_ALPHA
+order by QT.QT_st_cd,
+QT.POL_ID_NBR,
+QT.prspct_nbr,
+QT.FS_LOG_KEY
+),
+sum_dca_qtcount as
+(select
+ st_cd,
+ pol_id_nbr,
+ year(QUOTED_POL_EFF_DT) as qtyear, 
+ sum(QTCOUNT_6m) as sumqtcount_6m,
+ sum(QTCOUNT_1y) as sumqtcount_1y,
+ sum(QTCOUNT_3y) as sumqtcount_3y
+ from dcaqts
+ group by 
+st_cd,
+pol_id_nbr,
+qtyear
+),
+dca_qtcnt_capp as(
+select 
+ b.st_cd,
+ b.pol_id_char,
+ a.qtyear,
+ cast(b.pol_id_char as int) as polnum,
+ least(a.sumqtcount_6m,10) as capped_6m,
+ least(a.sumqtcount_1y,10) as capped_1y,
+ least(a.sumqtcount_3y,10) as capped_3y,
+sum(b.ECYPD) AS SUM_ECYPD,
+sum(B.ILTOT_ALL) AS SUM_ILTOT,
+sum(B.ILCAP_ALL) AS SUM_ILCAP,
+sum(B.EXP_LOSS_ALL) AS SUM_EXP_LOSS,
+sum(B.EXP_LOSS_POSTCAPP_5YR) AS SUM_EXPLOSS_POST,
+sum(B.EP_ALL) AS SUM_EPALL,
+from  sum_dca_qtcount as a right outer join
+plrnd.staging_scored.scored_DI_89_capp23_v7 as b
+on a.st_cd =b.st_cd
+and a.pol_id_nbr=polnum
+group by 
+b.st_cd,
+b.pol_id_char,
+qtyear,
+capped_6m,
+capped_1y,
+capped_3y
+),
+finalsum as 
+(
+select
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear,
+sum(SUM_ECYPD) as ecy,
+sum(SUM_EPALL) as ep,
+sum(SUM_ILTOT) as il,
+sum(SUM_ILCAP) as ilcap,
+sum(SUM_EXP_LOSS) as exploss,
+sum(SUM_EXPLOSS_POST) as exploss_post
+from dca_qtcnt_capp
+group by
+capped_6m,
+capped_1y,
+capped_3y,
+qtyear
+)
+select *
+from finalsum
