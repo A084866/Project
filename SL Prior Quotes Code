@@ -1,0 +1,86 @@
+with ACNTCT as
+(
+SELECT
+  prspct_key
+  ,count(distinct year(TRAN_DT)*100+month(TRAN_DT)) as CNTCT_CNT
+  ,count(distinct qt_nbr) as QT_CNT
+FROM
+   AQW_COPY.target.QT_PUB_VIEW
+WHERE 
+  TRAN_DT between add_months (QT_POL_EFF_DT, - 12) 
+  and PROD_CD in ('AA')
+GROUP BY 
+  prspct_key  
+ 
+)
+,DCNTCT as
+(
+select
+  prspct_nbr
+  ,count(distinct qt_nbr) as QT_CNT
+from 
+ DCA_COPY.Target.QUOTE_SET
+ where qt_cmplt_dt_et between add_months(QUOTED_POL_EFF_DT, - 12) and QUOTED_POL_EFF_DT
+  and PROD_CD in ('AU')
+group by 
+  prspct_nbr
+)
+ 
+,POL as
+(
+SELECT DISTINCT
+  q.POL_ID as POL_ID_CHAR
+  ,DCNTCT.QT_CNT
+from
+  DCA_COPY.target.quote_set q
+  LEFT JOIN DCNTCT on
+    q.PRSPCT_NBR = DCNTCT.PRSPCT_NBR
+ 
+UNION
+ 
+SELECT DISTINCT
+  q.POL_ID_CHAR
+  ,ACNTCT.QT_CNT
+FROM 
+  AQW_COPY.target.QT_PUB_VIEW q
+  LEFT JOIN ACNTCT on
+    q.prspct_key = ACNTCT.prspct_key
+ 
+) 
+select
+  p.CHNL_CD
+  ,p.RENW_CNT
+  ,p.CNSM_MKT_TIER
+  ,case when POL.QT_CNT is null then 0 else min(max(POL.QT_CNT,1),7) end as QT_CNT
+  ,sum(d.ern_prem_amt) as EP
+  ,sum(d.wrt_prem_amt) as WP
+  ,sum(d.incr_fea_cnt) as IncCnt
+  ,sum(d.paid_fea_cnt) as PdCnt
+  ,sum(d.loss_paid_amt + d.loss_resv_amt - d.loss_slsb_amt) as IncAmt
+  ,sum(d.loss_paid_amt - d.loss_slsb_amt) as PdAmt
+  ,sum(d.ern_exps_cnt)/12 as ECY
+  ,sum(d.wrt_exps_cnt)/12 as WCY
+  ,case when sum(d.ern_prem_amt) = 0 then 0 else sum(d.loss_paid_amt + d.loss_resv_amt - d.loss_slsb_amt)*100/sum(d.ern_prem_amt) end as LR
+ 
+from
+  PLR_COPY.target.YRL_POL_PL_AU d
+  LEFT JOIN POL on
+    POL.POL_ID_CHAR = d.POL_ID_CHAR 
+  LEFT JOIN M20.POLICY p on
+    p.POL_ID_CHAR = d.POL_ID_CHAR
+where 
+  d.PROD_CD in ('AU')
+  and d.CALEN_YR >= 2017
+  and year(p.COH_INCP_DT) >= 2019
+group by
+  p.CHNL_CD
+  ,p.RENW_CNT
+  ,p.CNSM_MKT_TIER
+  ,case when POL.QT_CNT is null then 0 else min(max(POL.QT_CNT,1),7) end 
+order by
+  p.CHNL_CD
+  ,p.RENW_CNT
+  ,p.CNSM_MKT_TIER
+  ,case when POL.QT_CNT is null then 0 else min(max(POL.QT_CNT,1),7) end 
+ 
+ 
