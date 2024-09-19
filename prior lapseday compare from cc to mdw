@@ -1,0 +1,124 @@
+with EXDlapse as
+(
+select distinct
+a.exd_order_id,
+b.POS_LOG_KEY,
+b.pos_log_key_seq_number,
+b.policy_number,
+b.policy_renewal_counter,
+c.carrier_name,
+c.bi_cov_ind,
+c.policy_inception_date,
+c.pop_order_id,
+c.policy_seq_nbr,
+c.policy_total_days_duration,
+d.policy_driver_cov_end_date,
+lag(d.policy_driver_cov_end_date) over (partition by c.pop_order_id order by d.policy_driver_cov_end_date ) as prevenddate,
+(prevenddate-c.policy_inception_date)as lapseday_1,
+row_number() over (partition by D.pop_order_id
+order by  C.pop_order_id, D.policy_driver_cov_end_date desc) as rn,
+from
+external_data_pop.published_ods.POP_ORDER as a
+inner join 
+external_data_common.published_ods.exd_policy as b
+on a.EXD_ORDER_ID=b.EXD_ORDER_ID
+inner join external_data_pop.published_ods.pop_carrier_prior_policy as c
+on a.POP_ORDER_ID=c.POP_ORDER_ID
+inner join 
+external_data_pop.published_ods.POP_CARRIER_PRIOR_POLICY_DRIVER as d
+on c.pop_order_id=d.pop_order_id
+and c.policy_seq_nbr=d.policy_seq_nbr
+order by b.pos_log_key,
+c.policy_seq_nbr
+),
+recentlapse as
+(select *
+from EXDLapse
+where rn=1),
+CAPPscore as
+(select 
+A.ST_CD,
+A.POL_ID_CHAR,
+A.COH_INCP_DT, 
+A.channel,
+A.LAPSE2_COH ,
+A.MC_COH ,
+A.POP_COH ,
+A.RISK_5YR,
+A.DRVRCNT,
+CASE WHEN B.PIAT_TIER IS NULL THEN 0
+ELSE 1 END AS PIATIND,
+sum(B.ECYPD) AS SUM_ECYPD,
+sum(B.ILTOT_ALL) AS SUM_ILTOT,
+sum(B.ILCAP_ALL) AS SUM_ILCAP,
+sum(B.EXP_LOSS_ALL) AS SUM_EXP_LOSS,
+sum(B.EXP_LOSS_POSTCAPP_5YR) AS SUM_EXPLOSS_POST,
+sum(B.EP_ALL) AS SUM_EPALL
+from PLRND.RAW.CAPP21_RAW_DATA as A
+right join plrnd.staging_scored.scored_DI_89_capp21_v7 as B
+on A.ST_CD=B.ST_CD
+AND A.POL_ID_CHAR =B.POL_ID_CHAR
+AND A.SUFFIX=B.SUFFIX
+AND A.POLEXPYR=B.POLEXPYR
+AND A.VEHPOS=B.VEHPOS
+AND A.VEHVRSN=B.VEHVRSN
+WHERE A.COH_INCP_DT>='2019-01-01'
+AND A.COH_INCP_DT<='2023-01-01'
+GROUP BY 
+A.ST_CD	,
+A.POL_ID_CHAR,
+A.COH_INCP_DT, 
+A.channel,
+A.LAPSE2_COH ,
+A.MC_COH ,
+A.POP_COH ,
+A.RISK_5YR,
+A.DRVRCNT,
+PIATIND),
+merged_table as
+(select
+a.*,
+b.*,
+(b.COH_INCP_DT-a.policy_driver_cov_end_date) as
+Lapseday,
+(case when lapseday_1<=0 then '0'
+ when 0<lapseday_1<31 then '1-31'
+ when lapseday_1>=30 then '30+'
+end) as prior_lapse,
+(case when lapseday<=0 then '0'
+ when 0<lapseday<31 then '1-31'
+ when lapseday>=30 then '30+'
+end) as POP_CC,
+( case when policy_total_days_duration<5 then '<5'
+when 5 <=policy_total_days_duration<30 then '5-30'
+when 30 <=policy_total_days_duration<180 then '30-180'
+when policy_total_days_duration>=180 then '180+'
+end) as lop,
+from  recentlapse as a
+inner join cappscore as b
+on a.policy_number =b.pol_id_char
+),
+finalsum as
+(select
+lapse2_coh,
+pop_coh,
+pop_cc,
+piatind,
+lop,
+prior_lapse,
+sum(SUM_ECYPD) as ecysum,
+sum(SUM_EPALL) as epsum,
+sum(SUM_ILTOT) as ILSUM,
+sum(SUM_ILcap) as ILcapSUM,
+sum(SUM_EXP_LOSS) as sumexploss,
+SUM(SUM_EXPLOSS_POST) AS SUMEXPLOSSPOST
+from merged_table
+group by 
+lapse2_coh,
+pop_coh,
+pop_cc,
+piatind,
+lop,
+prior_lapse)
+select *
+from finalsum
